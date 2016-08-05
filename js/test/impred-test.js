@@ -5,7 +5,11 @@ var temp = require('temp');
 var $S = require('suspend'), $R = $S.resume, $T = function(gen) { return function(done) { $S.run(gen, done); } };
 
 var Nodalion = require('../nodalion.js');
-var ns = Nodalion.namespace('/impred', ['testLocalStore', 'localStr', 'testNow', 'testUUID', 'testLocalQueue', 'testBase64Encode', 'testBase64Decode', 'testLoadNamespace']);
+var ns = Nodalion.namespace('/impred', ['testLocalStore', 'localStr', 'testNow', 'testUUID', 'testLocalQueue', 
+                                        'testBase64Encode', 'testBase64Decode', 'testLoadNamespace', 
+                                        'testLoadFile', 'testLoadFile2',
+                                        'readSourceFile', 'task', 'assert', 'pred', 'retract',
+                                        'loadSourceFileToContainer', 'removeSourceFileFromContainer']);
 
 var nodalion = new Nodalion(__dirname + '/../../prolog/cedalion.pl', '/tmp/impred-ced.log');
 
@@ -80,13 +84,13 @@ describe('impred', function(){
             var X = {var:'X'};
             var content = "'/impred#foo'(1):-'builtin#true'. '/impred#foo'(2):-'builtin#true'. '/impred#foo'(3):-'builtin#true'.";
             var file = yield temp.open({prefix: 'ced', suffix: '.pl'}, $R());
-            fs.write(file.fd, content);
+            yield fs.write(file.fd, content, $R());
             var result = yield nodalion.findAll(X, ns.testLoadNamespace(file.path, X), $R());
             assert.deepEqual(result, [1, 2, 3]);
         }));
         it.skip('should load containers when needed', function(done){
             this.timeout(7000);
-            $S.async(function*() {
+            $S.callback(function*() {
                 var hash = "QmdHZHRfuJ2QBXfvaMr3ksh3gKyoxc15LhRhKgEKrf4wnj";
                 var X = {var:'X'};
                 var nns = Nodalion.namespace('/nodalion', ['testContainer']);
@@ -94,5 +98,84 @@ describe('impred', function(){
                 assert.deepEqual(result, ['cloudlog']);
             })(done);
         });
+    });
+    var writeFile = $S.callback(function*(content) {
+            var file = yield temp.open({prefix: 'example', suffix: '.ced'}, $R());
+            yield fs.write(file.fd, content, $R());
+            return file.path;
+    });
+    describe('readSourceFile(FileName, NS)', () => {
+        it('should return a list of the statements in a file', $T(function*() {
+            var fileName = yield writeFile("hello(World). hola(Mondi).", $R());
+            var X = {var:'X'};
+            var res = yield nodalion.findAll(X, ns.task(ns.readSourceFile(fileName, '/foo'), X, {var:'T'}), $R());
+            assert.equal(res.length, 1); // One result
+            res = res[0].meaning();
+            assert.equal(res.length, 2); // Two statements
+            res = res[0];
+            assert.equal(res.name, 'builtin#loadedStatement');
+            assert.equal(res.args.length, 3);
+            assert.equal(res.args[0], fileName);
+            assert.equal(res.args[1].name, '/foo#hello');
+            var varNames = res.args[2].meaning();
+            assert.equal(varNames.length, 1);
+            assert.equal(varNames[0].args[1], 'World');
+        }));
+    });
+    describe('assert(Statement)', () => {
+        it('should add the statement to the logic  program', $T(function*() {
+            // Add /foo:bar(3):-builtin:true to the program 
+            var builtin = Nodalion.namespace('builtin', ['true']);
+            var foo = Nodalion.namespace('/foo', ['bar']);
+            var statement = {name: ":-", args: [foo.bar(3), builtin.true()]};
+            yield nodalion.findAll({var: '_'}, ns.task(ns.assert(statement), {var: '_X'}, {var: '_T'}), $R());
+            // Query /foo:bar(X)
+            var X = {var:'X'};
+            var res = yield nodalion.findAll(X, ns.pred(foo.bar(X)), $R());
+            assert.deepEqual(res, [3]);
+        }));
+    });
+    describe('retract(Statement)', () => {
+        it('should remove the statement from the logic  program', $T(function*() {
+            // Add /foo2:bar(4):-builtin:true and /foo2:bar(5):-builtin:true to the program 
+            var builtin = Nodalion.namespace('builtin', ['true']);
+            var foo = Nodalion.namespace('/foo2', ['bar']);
+            yield nodalion.findAll({var: '_'}, ns.task(ns.assert({name: ":-", args: [foo.bar(4), builtin.true()]}), {var: '_X'}, {var: '_T'}), $R());
+            yield nodalion.findAll({var: '_'}, ns.task(ns.assert({name: ":-", args: [foo.bar(5), builtin.true()]}), {var: '_X'}, {var: '_T'}), $R());
+            // Remove /foo2:bar(4):-builtin:true
+            yield nodalion.findAll({var: '_'}, ns.task(ns.retract({name: ":-", args: [foo.bar(4), builtin.true()]}), {var: '_X'}, {var: '_T'}), $R());
+            // Query /foo:bar(X)
+            var X = {var:'X'};
+            var res = yield nodalion.findAll(X, ns.pred(foo.bar(X)), $R());
+            assert.deepEqual(res, [5]);
+        }));
+    });
+    describe('loadSourceFileToContainer(FileName, NS, Container)', () => {
+        it('should load a cedalion source file on top of an image', $T(function*() {
+            var X = {var:'X'};
+            var imageFileName = yield writeFile("'/impred#foo'(4):-'builtin#true'.", $R());
+            var exampleFileName = yield writeFile("foo(5):-builtin:true.", $R());
+            var result = yield nodalion.findAll(X, ns.testLoadFile(imageFileName, exampleFileName, '/impred', X), $R());
+            assert.deepEqual(result, [4, 5]);
+        }))
+        it('should support the loadedStatement() predicate', $T(function*() {
+            var X = {var:'X'};
+            var imageFileName = yield writeFile("", $R());
+            var exampleFileName = yield writeFile("foo(7):-builtin:true. foo(8):-builtin:true.", $R());
+            var result = yield nodalion.findAll(X, ns.testLoadFile2(imageFileName, exampleFileName, '/impred', X), $R());
+            assert.deepEqual(result, [7, 8]);
+        }))
+    });
+    describe('removeSourceFileFromContainer(FileName, Container)', () => {
+        it('should remove all statements loaded from that file from the container', $T(function*() {
+            var X = {var:'X'};
+            var exampleFileName = yield writeFile("foo(1):-builtin:true.\nfoo(2):-builtin:true.", $R());
+            yield nodalion.findAll(X, ns.loadSourceFileToContainer(exampleFileName, '/impred', 'cont1'), $R());
+            var result = yield nodalion.findAll(X, ns.pred({name: 'cont1@/impred#foo', args:[X]}), $R());
+            assert.deepEqual(result, [1, 2]);
+            yield nodalion.findAll(X, ns.removeSourceFileFromContainer(exampleFileName, 'cont1'), $R());
+            var result = yield nodalion.findAll(X, ns.pred({name: 'cont1@/impred#foo', args:[X]}), $R());
+            assert.deepEqual(result, []);
+        }));
     });
 });

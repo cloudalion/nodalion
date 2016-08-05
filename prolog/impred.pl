@@ -99,6 +99,15 @@ handleTask('/impred#loadCedalionImage'(!FileName, Prep, In, Out), _) :-
     open(FileName, read, Stream),
     read(Stream, Clause),
     loadCedalionImage(Clause, Stream, Prep, In, Out).
+handleTask('/impred#readSourceFile'(!FileName, !NS), Content) :-
+    open(FileName, read, Stream),
+    read_term(Stream, Statement, [variable_names(VarNames)]),
+    readSourceFile(Statement, VarNames, FileName, Stream, NS, Content).
+handleTask('/impred#assert'(Statement), _) :-
+    assert(Statement).
+handleTask('/impred#retract'(Statement), _) :-
+    retract(Statement).
+
 
 loadCedalionImage(end_of_file, _, _, _, _) :- !.
 loadCedalionImage(Clause, Stream, Prep, In, Out) :-
@@ -108,3 +117,9 @@ loadCedalionImage(Clause, Stream, Prep, In, Out) :-
     read(Stream, Clause2),
     loadCedalionImage(Clause2, Stream, Prep, In, Out).
 
+readSourceFile(end_of_file, _, _, _, _, []) :- !.
+readSourceFile(Statement, VarNames, FileName, Stream, NS, ['builtin#loadedStatement'(!FileName, GlobalStatement, VNs) | Content]) :-
+    convertVarNames(VarNames, VNs),
+    localToGlobal(Statement, [default=NS], GlobalStatement),
+    read_term(Stream, NextStatement, [variable_names(NextVarNames)]),
+    readSourceFile(NextStatement, NextVarNames, FileName, Stream, NS, Content).
