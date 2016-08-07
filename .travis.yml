@@ -1,0 +1,12 @@
+language: node_js
+node_js:
+  - "6"
+  - "6.1"
+  - "5.11"
+
+dist: trusty
+
+before_install:
+  - sudo apt-get -qq update
+  - sudo apt-get install -y swi-prolog
+  
